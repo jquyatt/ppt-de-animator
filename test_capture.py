@@ -94,6 +94,27 @@ def test_content_signature_still_detects_real_change():
     assert content_signature(p1) != content_signature(p2)
 
 
+def test_content_signature_does_not_hide_bottom_animation():
+    # Regression: a fly-in-from-below animation passes through the bottom
+    # of the frame on its way to its final position. An earlier version of
+    # content_signature excluded a broad percentage-based bottom strip
+    # (meant to dodge the popup toolbar) that was wide enough to swallow
+    # that motion too, so a mid-flight frame got accepted as "settled".
+    # A change near the bottom-center/right (outside the small toolbar
+    # corner) must still register as different.
+    w, h = 3456, 2234
+    im1 = Image.new("RGB", (w, h), (250, 250, 250))
+    im2 = Image.new("RGB", (w, h), (250, 250, 250))
+    # well clear of the bottom-left toolbar corner, but still near the
+    # bottom edge -- exactly where an in-flight fly-in element would be
+    for x in range(1500, 1700):
+        for y in range(h - 100, h - 40):
+            im1.putpixel((x, y), (250, 250, 250))  # not yet arrived
+            im2.putpixel((x, y), (20, 80, 200))  # mid-flight bullet color
+    p1, p2 = _save(im1), _save(im2)
+    assert content_signature(p1) != content_signature(p2)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for t in tests:

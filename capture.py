@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from scan import analyze_deck, extract_media
 
@@ -33,6 +33,17 @@ SETTLE_TIMEOUT = 15  # seconds; safety cap per click if nothing stabilizes
 END_CARD_MAX_BYTES = 400_000  # PowerPoint's black "End of slide show" card
 VIDEO_GRACE_SECONDS = 1.5  # fixed wait on autoplay/looping video slides
 RIGHT_ARROW = 124
+
+# ponytail: small fixed-pixel chrome zones, not a percentage of frame height.
+# A percentage margin (the original fix) ate into real slide content -- a
+# bullet's fly-in-from-below animation passes through the bottom of the
+# frame, so a broad bottom strip hid its motion from the stability check and
+# the frame got accepted mid-flight. These mask only the menu bar (a thin
+# full-width strip) and the popup toolbar (a small bottom-left cluster).
+# Bump these if a future machine's chrome turns out taller than this.
+MENU_BAR_MARGIN_PX = 50
+TOOLBAR_CORNER_W_PX = 220
+TOOLBAR_CORNER_H_PX = 60
 
 
 def osa(script):
@@ -48,18 +59,29 @@ def screenshot(path):
     subprocess.run(["screencapture", "-x", str(path)], check=True)
 
 
-def content_signature(path, top_margin=0.08, bottom_margin=0.12):
-    """Hashes only the central band of the frame, excluding the system menu
-    bar (top) and PowerPoint's popup toolbar (bottom-left). Both are UI
-    chrome that can flicker (a ticking clock, a fading toolbar, a recording
-    indicator) independent of whether the slide itself has finished
-    animating -- without this, settle-detection compares those flickering
-    pixels too, never finds two identical frames, and burns the full
-    SETTLE_TIMEOUT on every single click even on a static slide."""
-    im = Image.open(path)
+def content_signature(path):
+    """Hashes the frame with two small UI-chrome zones blanked out: the
+    system menu bar (a thin strip across the top) and PowerPoint's popup
+    toolbar (a small cluster in the bottom-left corner). Both can flicker
+    (a ticking clock, a fading toolbar, a recording indicator) independent
+    of whether the slide itself has finished animating -- without masking
+    them, settle-detection never finds two identical frames and burns the
+    full SETTLE_TIMEOUT on every single click even on a static slide.
+
+    Masks (paints black) rather than crops, and keeps the zones small and
+    corner/edge-specific, so real slide content -- including animations
+    that legitimately pass through the bottom of the frame, like a
+    fly-in-from-below bullet -- stays visible to the comparison."""
+    im = Image.open(path).convert("RGB")
     w, h = im.size
-    box = (0, int(h * top_margin), w, h - int(h * bottom_margin))
-    return hashlib.sha256(im.crop(box).tobytes()).hexdigest()
+    masked = im.copy()
+    draw = ImageDraw.Draw(masked)
+    draw.rectangle([0, 0, w, min(MENU_BAR_MARGIN_PX, h)], fill=(0, 0, 0))
+    draw.rectangle(
+        [0, max(0, h - TOOLBAR_CORNER_H_PX), min(TOOLBAR_CORNER_W_PX, w), h],
+        fill=(0, 0, 0),
+    )
+    return hashlib.sha256(masked.tobytes()).hexdigest()
 
 
 def detect_crop_box(image_path, black_thresh=10):

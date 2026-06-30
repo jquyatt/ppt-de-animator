@@ -3,7 +3,9 @@
 out/
 video_out/
 *_out/
+*_frames/
 extracted_media/
 __pycache__/
 *.pyc
 .DS_Store
+DropToCapture.app/
