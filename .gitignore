@@ -1,0 +1,8 @@
+*.pptx
+~$*
+out/
+video_out/
+*_out/
+extracted_media/
+__pycache__/
+*.pyc
