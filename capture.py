@@ -9,10 +9,12 @@ granted to whatever app runs this script (System Settings > Privacy &
 Security). PowerPoint must be installed. Pillow (pip install Pillow) is
 used to detect and crop letterbox/pillarbox bars left by screencapture.
 
-Usage:
+Detects embedded video, extracts it to out_dir/videos/ if present, then
+captures every click. Usage:
   python3 capture.py "deck.pptx" out_dir/
   python3 capture.py "deck.pptx" out_dir/ --load-wait 10   # large decks
   python3 capture.py "deck.pptx" out_dir/ --max-clicks 40  # loop_until_stopped decks
+  python3 capture.py "deck.pptx" out_dir/ --no-video-extract
 """
 import argparse
 import hashlib
@@ -23,7 +25,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from scan import analyze_deck
+from scan import analyze_deck, extract_media
 
 POLL_INTERVAL = 0.25
 STABLE_READS = 2
@@ -173,13 +175,14 @@ def wait_for_frame(tmp_path, skip_settle):
             return
 
 
-def run_capture(deck_path, out_dir, max_clicks=None, load_wait=4):
+def run_capture(deck_path, out_dir, max_clicks=None, load_wait=4, manifest=None):
     deck_path = Path(deck_path)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = out_dir / "_poll.jpg"
 
-    manifest = analyze_deck(deck_path)
+    if manifest is None:
+        manifest = analyze_deck(deck_path)
     steps = manifest["steps"]
     expected_clicks = manifest["total_clicks_to_end"]
     print(
@@ -235,14 +238,50 @@ def run_capture(deck_path, out_dir, max_clicks=None, load_wait=4):
     return saved
 
 
+def process_deck(deck_path, out_dir, video_dir=None, extract_video=True, max_clicks=None, load_wait=4):
+    """Full pipeline: scan the deck once, pull out any embedded video files
+    it has, then capture every click. Scanning first (rather than just
+    trying to extract blindly) means we only touch the filesystem for video
+    when there's actually video to find, and the same manifest drives both
+    the extraction decision and the capture run -- no redundant re-scan."""
+    deck_path = Path(deck_path)
+    out_dir = Path(out_dir)
+
+    manifest = analyze_deck(deck_path)
+    has_video = any(s["autoplay_video"] or s["looping_video"] for s in manifest["slides"])
+
+    extracted = []
+    if has_video and extract_video:
+        video_dir = Path(video_dir) if video_dir else out_dir / "videos"
+        extracted = extract_media(deck_path, video_dir)
+        print(f"found video on {sum(1 for s in manifest['slides'] if s['autoplay_video'] or s['looping_video'])} "
+              f"slide(s), extracted {len(extracted)} file(s) to {video_dir}")
+    elif has_video:
+        print("video detected but --no-video-extract was set, skipping extraction")
+    else:
+        print("no video detected")
+
+    saved = run_capture(deck_path, out_dir, max_clicks=max_clicks, load_wait=load_wait, manifest=manifest)
+    return {"extracted_media": extracted, "frames": saved}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("deck", help="path to .pptx")
     ap.add_argument("out_dir", help="directory to write JPGs into")
     ap.add_argument("--max-clicks", type=int, default=None, help="safety cap, mainly for loop_until_stopped decks")
     ap.add_argument("--load-wait", type=int, default=4, help="seconds to wait for PowerPoint to open/render large decks")
+    ap.add_argument("--video-dir", default=None, help="where to extract embedded video (default: out_dir/videos)")
+    ap.add_argument("--no-video-extract", action="store_true", help="skip extracting embedded video even if present")
     args = ap.parse_args()
-    run_capture(args.deck, args.out_dir, args.max_clicks, args.load_wait)
+    process_deck(
+        args.deck,
+        args.out_dir,
+        video_dir=args.video_dir,
+        extract_video=not args.no_video_extract,
+        max_clicks=args.max_clicks,
+        load_wait=args.load_wait,
+    )
 
 
 if __name__ == "__main__":
