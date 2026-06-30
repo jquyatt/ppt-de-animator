@@ -9,7 +9,10 @@ granted to whatever app runs this script (System Settings > Privacy &
 Security). PowerPoint must be installed. Pillow (pip install Pillow) is
 used to detect and crop letterbox/pillarbox bars left by screencapture.
 
-Usage: python3 capture.py "deck.pptx" out_dir/
+Usage:
+  python3 capture.py "deck.pptx" out_dir/
+  python3 capture.py "deck.pptx" out_dir/ --load-wait 10   # large decks
+  python3 capture.py "deck.pptx" out_dir/ --max-clicks 40  # loop_until_stopped decks
 """
 import argparse
 import hashlib
@@ -233,7 +236,7 @@ def run_capture(deck_path, out_dir, max_clicks=None, load_wait=4):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("deck", help="path to .pptx")
     ap.add_argument("out_dir", help="directory to write JPGs into")
     ap.add_argument("--max-clicks", type=int, default=None, help="safety cap, mainly for loop_until_stopped decks")

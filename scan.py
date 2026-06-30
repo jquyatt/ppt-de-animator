@@ -127,7 +127,7 @@ def extract_media(path, out_dir):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("deck", help="path to .pptx")
     ap.add_argument("--extract-media", metavar="DIR", help="dump embedded video files here")
     args = ap.parse_args()
