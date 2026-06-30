@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from capture import detect_crop_box
+from capture import content_signature, detect_crop_box
 
 
 def _save(im):
@@ -63,6 +63,35 @@ def test_corner_overlay_does_not_fool_detection():
     path = _save(im)
     box = detect_crop_box(path)
     assert box[1] == 100, box
+
+
+def test_content_signature_ignores_chrome_flicker():
+    # two frames identical in the slide content but differing only in the
+    # menu-bar strip (top) and toolbar corner (bottom-left) -- e.g. a
+    # ticking clock or a fading popup toolbar -- must hash the same,
+    # otherwise settle-detection would never see two "identical" frames
+    # and burn the full timeout on every click.
+    w, h = 1200, 900
+    im1 = Image.new("RGB", (w, h), (250, 250, 250))
+    im2 = Image.new("RGB", (w, h), (250, 250, 250))
+    for x in range(w):  # menu bar row differs
+        im1.putpixel((x, 0), (10, 10, 10))
+        im2.putpixel((x, 0), (20, 20, 20))
+    for x in range(0, 80):  # toolbar corner differs
+        for y in range(h - 30, h):
+            im1.putpixel((x, y), (5, 5, 5))
+            im2.putpixel((x, y), (250, 250, 250))
+    p1, p2 = _save(im1), _save(im2)
+    assert content_signature(p1) == content_signature(p2)
+
+
+def test_content_signature_still_detects_real_change():
+    w, h = 1200, 900
+    im1 = Image.new("RGB", (w, h), (250, 250, 250))
+    im2 = Image.new("RGB", (w, h), (250, 250, 250))
+    im2.putpixel((w // 2, h // 2), (0, 0, 0))  # a real change in the slide
+    p1, p2 = _save(im1), _save(im2)
+    assert content_signature(p1) != content_signature(p2)
 
 
 if __name__ == "__main__":

@@ -48,8 +48,18 @@ def screenshot(path):
     subprocess.run(["screencapture", "-x", str(path)], check=True)
 
 
-def file_hash(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def content_signature(path, top_margin=0.08, bottom_margin=0.12):
+    """Hashes only the central band of the frame, excluding the system menu
+    bar (top) and PowerPoint's popup toolbar (bottom-left). Both are UI
+    chrome that can flicker (a ticking clock, a fading toolbar, a recording
+    indicator) independent of whether the slide itself has finished
+    animating -- without this, settle-detection compares those flickering
+    pixels too, never finds two identical frames, and burns the full
+    SETTLE_TIMEOUT on every single click even on a static slide."""
+    im = Image.open(path)
+    w, h = im.size
+    box = (0, int(h * top_margin), w, h - int(h * bottom_margin))
+    return hashlib.sha256(im.crop(box).tobytes()).hexdigest()
 
 
 def detect_crop_box(image_path, black_thresh=10):
@@ -136,7 +146,11 @@ def open_and_start_slideshow(deck_path, load_wait=4):
         run slide show sss
     end tell
     """)
-    time.sleep(2)
+    # PowerPoint's popup toolbar (if enabled in Preferences > Slide Show) can
+    # be visible right when the show starts and takes a few seconds of no
+    # mouse movement to fade -- this script never moves the mouse, so just
+    # wait it out rather than risk baking it into the first frame.
+    time.sleep(4)
 
 
 def exit_slideshow():
@@ -152,7 +166,9 @@ def exit_slideshow():
 def wait_for_frame(tmp_path, skip_settle):
     """Captures into tmp_path. If skip_settle, just waits a fixed grace
     period (pixels on an autoplay/looping video slide will never stabilize).
-    Otherwise polls until two consecutive captures hash identically."""
+    Otherwise polls until two consecutive captures match on content_signature
+    (which ignores UI chrome) -- comparing the full frame would let a
+    flickering menu-bar clock or fading toolbar block stability forever."""
     if skip_settle:
         time.sleep(VIDEO_GRACE_SECONDS)
         screenshot(tmp_path)
@@ -161,7 +177,7 @@ def wait_for_frame(tmp_path, skip_settle):
     prev_hash, stable, elapsed = None, 0, 0.0
     while True:
         screenshot(tmp_path)
-        h = file_hash(tmp_path)
+        h = content_signature(tmp_path)
         if h == prev_hash:
             stable += 1
             if stable >= STABLE_READS:
