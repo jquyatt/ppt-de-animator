@@ -6,3 +6,4 @@ video_out/
 extracted_media/
 __pycache__/
 *.pyc
+.DS_Store

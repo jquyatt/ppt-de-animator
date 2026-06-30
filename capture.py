@@ -6,7 +6,8 @@ No AI involved at runtime.
 
 Requires (one-time, manual): Screen Recording + Accessibility permission
 granted to whatever app runs this script (System Settings > Privacy &
-Security). PowerPoint must be installed.
+Security). PowerPoint must be installed. Pillow (pip install Pillow) is
+used to detect and crop letterbox/pillarbox bars left by screencapture.
 
 Usage: python3 capture.py "deck.pptx" out_dir/
 """
@@ -16,6 +17,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from PIL import Image
 
 from scan import analyze_deck
 
@@ -42,6 +45,55 @@ def screenshot(path):
 
 def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def detect_crop_box(image_path, black_thresh=10):
+    """Finds the real content rectangle inside a screenshot, stripping
+    letterbox/pillarbox bars. screencapture grabs the whole display, but
+    PowerPoint's slideshow window doesn't necessarily fit it exactly (its
+    aspect ratio differs, and on this Mac the content wasn't even centered
+    -- a camera-housing safe area pushed it down) so the bars can be
+    asymmetric. Detected once empirically per run rather than assumed from
+    geometry, then reused for every frame. Returns a PIL crop box, or None
+    if no bars are present."""
+    im = Image.open(image_path)
+    w, h = im.size
+    px = im.load()
+
+    # Sample only the central band of each edge so a corner overlay (e.g. a
+    # screen-recording indicator dot) can't fool the scan into thinking a
+    # bar has ended early.
+    xs = range(int(w * 0.3), int(w * 0.7), max(1, int(w * 0.01)))
+    ys = range(int(h * 0.3), int(h * 0.7), max(1, int(h * 0.01)))
+
+    def is_black_row(y):
+        return all(max(px[x, y][:3]) <= black_thresh for x in xs)
+
+    def is_black_col(x):
+        return all(max(px[x, y][:3]) <= black_thresh for y in ys)
+
+    top = 0
+    while top < h and is_black_row(top):
+        top += 1
+    bottom = h - 1
+    while bottom > top and is_black_row(bottom):
+        bottom -= 1
+    left = 0
+    while left < w and is_black_col(left):
+        left += 1
+    right = w - 1
+    while right > left and is_black_col(right):
+        right -= 1
+
+    box = (left, top, right + 1, bottom + 1)
+    if box == (0, 0, w, h):
+        return None
+    return box
+
+
+def crop_in_place(image_path, box):
+    im = Image.open(image_path).convert("RGB")
+    im.crop(box).save(image_path, quality=95)
 
 
 def press_right_arrow():
@@ -135,6 +187,7 @@ def run_capture(deck_path, out_dir, max_clicks=None, load_wait=4):
 
     open_and_start_slideshow(deck_path, load_wait=load_wait)
 
+    crop_box = None
     saved = []
     for step in steps:
         if max_clicks is not None and step["click"] > max_clicks:
@@ -153,6 +206,14 @@ def run_capture(deck_path, out_dir, max_clicks=None, load_wait=4):
 
         fname = out_dir / f"slide{step['slide']:03d}_click{step['click']:03d}.jpg"
         tmp_path.replace(fname)
+
+        if crop_box is None:
+            crop_box = detect_crop_box(fname) or False
+            if crop_box:
+                print(f"detected letterbox bars, cropping to {crop_box}")
+        if crop_box:
+            crop_in_place(fname, crop_box)
+
         saved.append(fname)
         print(f"click {step['click']} (slide {step['slide']}) -> {fname.name} ({size} bytes)")
 
